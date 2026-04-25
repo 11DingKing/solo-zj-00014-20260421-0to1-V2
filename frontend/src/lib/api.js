@@ -81,5 +81,36 @@ export const api = {
 		request(`/orders/${id}/status/`, {
 			method: 'PUT',
 			body: JSON.stringify({ status })
-		})
+		}),
+
+	getReviewsByBook: (bookId, page = 1) =>
+		request(`/reviews/book/${bookId}/?page=${page}`),
+
+	getMyReview: (bookId) =>
+		request(`/reviews/book/${bookId}/my/`),
+
+	submitReview: (bookId, rating, content = '') =>
+		request('/reviews/', {
+			method: 'POST',
+			body: JSON.stringify({
+				book: bookId,
+				rating: parseInt(rating),
+				content: content || ''
+			})
+		}),
+
+	deleteReview: (reviewId) =>
+		request(`/reviews/${reviewId}/`, { method: 'DELETE' }),
+
+	getAllReviews: (params = {}) => {
+		const searchParams = new URLSearchParams();
+		Object.entries(params).forEach(([key, value]) => {
+			if (value) searchParams.append(key, value);
+		});
+		const query = searchParams.toString();
+		return request(`/admin/reviews/${query ? `?${query}` : ''}`);
+	},
+
+	adminDeleteReview: (reviewId) =>
+		request(`/admin/reviews/${reviewId}/`, { method: 'DELETE' })
 };

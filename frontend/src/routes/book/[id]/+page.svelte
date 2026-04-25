@@ -9,15 +9,99 @@
 	let error = '';
 	let quantity = 1;
 
+	let reviews = [];
+	let reviewsPage = 1;
+	let hasMoreReviews = false;
+	let loadingReviews = false;
+	let hasReviewed = false;
+	let myReview = null;
+	let reviewRating = 5;
+	let reviewContent = '';
+	let submittingReview = false;
+
 	async function loadBook() {
 		loading = true;
 		error = '';
 		try {
 			book = await api.getBook($page.params.id);
+			await Promise.all([loadReviews(), checkMyReview()]);
 		} catch (e) {
 			error = e.message || '加载图书失败';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadReviews(pageNum = 1, append = false) {
+		loadingReviews = true;
+		try {
+			const result = await api.getReviewsByBook($page.params.id, pageNum);
+			if (append) {
+				reviews = [...reviews, ...result.results];
+			} else {
+				reviews = result.results;
+			}
+			hasMoreReviews = !!result.next;
+			reviewsPage = pageNum;
+		} catch (e) {
+			console.error('加载评价失败:', e);
+		} finally {
+			loadingReviews = false;
+		}
+	}
+
+	async function loadMoreReviews() {
+		if (!hasMoreReviews || loadingReviews) return;
+		await loadReviews(reviewsPage + 1, true);
+	}
+
+	async function checkMyReview() {
+		try {
+			const result = await api.getMyReview($page.params.id);
+			hasReviewed = result.has_review;
+			myReview = result.review;
+		} catch (e) {
+			console.error('检查我的评价失败:', e);
+		}
+	}
+
+	async function submitReview() {
+		if (reviewRating < 1 || reviewRating > 5) {
+			alert('请选择 1-5 星评分');
+			return;
+		}
+
+		submittingReview = true;
+		try {
+			await api.submitReview($page.params.id, reviewRating, reviewContent);
+			alert('评价提交成功');
+			await Promise.all([loadBook(), refreshBookStats()]);
+		} catch (e) {
+			alert('提交失败: ' + e.message);
+		} finally {
+			submittingReview = false;
+		}
+	}
+
+	async function deleteReview(reviewId) {
+		if (!confirm('确定要删除这条评价吗？')) return;
+
+		try {
+			await api.deleteReview(reviewId);
+			alert('删除成功');
+			await Promise.all([loadReviews(), checkMyReview(), refreshBookStats()]);
+		} catch (e) {
+			alert('删除失败: ' + e.message);
+		}
+	}
+
+	async function refreshBookStats() {
+		try {
+			const updatedBook = await api.getBook($page.params.id);
+			book.average_rating = updatedBook.average_rating;
+			book.review_count = updatedBook.review_count;
+		} catch (e) {
+			console.error('刷新图书统计失败:', e);
 		}
 	}
 
@@ -33,6 +117,30 @@
 			alert('添加失败: ' + e.message);
 		}
 	}
+
+	function formatDate(dateStr) {
+		const date = new Date(dateStr);
+		return date.toLocaleDateString('zh-CN', {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	function renderStars(rating, interactive = false) {
+		let stars = [];
+		for (let i = 1; i <= 5; i++) {
+			stars.push({
+				filled: i <= rating,
+				value: i
+			});
+		}
+		return stars;
+	}
+
+	$: stars = renderStars(reviewRating);
 
 	onMount(() => {
 		loadBook();
@@ -78,6 +186,16 @@
 					</span></p>
 				</div>
 
+				<div class="rating-summary">
+					<div class="stars-display">
+						{#each renderStars(Math.round(book.average_rating || 0)) as star}
+							<span class={star.filled ? 'star-filled' : 'star-empty'}>★</span>
+						{/each}
+					</div>
+					<span class="rating-value">{book.average_rating || '-'}</span>
+					<span class="review-count">({book.review_count || 0} 条评价)</span>
+				</div>
+
 				<div class="price-section">
 					<span class="price-label">价格:</span>
 					<span class="price-value">¥{book.price}</span>
@@ -115,6 +233,91 @@
 						<h3>内容简介</h3>
 						<p>{book.description}</p>
 					</div>
+				{/if}
+			</div>
+		</div>
+
+		<div class="reviews-section">
+			<h2>用户评价</h2>
+
+			<div class="review-form-section">
+				{#if hasReviewed}
+					<div class="already-reviewed">
+						<span class="check-icon">✓</span>
+						<span>您已评价过该书籍</span>
+					</div>
+				{:else}
+					<h3>发表评价</h3>
+					<div class="review-form">
+						<div class="form-group">
+							<label>评分:</label>
+							<div class="star-rating">
+								{#each stars as star, i}
+									<button
+										type="button"
+										class={star.filled ? 'star-btn star-btn-filled' : 'star-btn'}
+										on:click={() => reviewRating = i + 1}
+									>★</button>
+								{/each}
+								<span class="rating-text">{reviewRating} 星</span>
+							</div>
+						</div>
+						<div class="form-group">
+							<label>评价内容:</label>
+							<textarea
+								bind:value={reviewContent}
+								placeholder="分享您对这本书的看法..."
+								rows="4"
+							></textarea>
+						</div>
+						<button
+							class="submit-review-btn"
+							on:click={submitReview}
+							disabled={submittingReview}
+						>
+							{submittingReview ? '提交中...' : '提交评价'}
+						</button>
+					</div>
+				{/if}
+			</div>
+
+			<div class="reviews-list">
+				{#if reviews.length === 0 && !loadingReviews}
+					<div class="no-reviews">暂无评价</div>
+				{:else}
+					{#each reviews as review}
+						<div class="review-item">
+							<div class="review-header">
+								<div class="review-stars">
+									{#each renderStars(review.rating) as star}
+										<span class={star.filled ? 'star-filled' : 'star-empty'}>★</span>
+									{/each}
+								</div>
+								<span class="review-date">{formatDate(review.created_at)}</span>
+								{#if review.is_owner}
+									<button
+										class="delete-review-btn"
+										on:click={() => deleteReview(review.id)}
+									>删除</button>
+								{/if}
+							</div>
+							{#if review.content}
+								<div class="review-content">{review.content}</div>
+							{/if}
+						</div>
+					{/each}
+
+					{#if hasMoreReviews}
+						<div class="load-more-container">
+							<button
+								class="load-more-btn"
+								on:click={loadMoreReviews}
+								disabled={loadingReviews}
+							>
+								{loadingReviews ? '加载中...' : '加载更多'}
+							</button>
+						</div>
+					{/if}
 				{/if}
 			</div>
 		</div>
@@ -205,7 +408,7 @@
 	}
 
 	.book-meta {
-		margin-bottom: 30px;
+		margin-bottom: 20px;
 	}
 
 	.book-meta p {
@@ -236,6 +439,34 @@
 	.out-of-stock {
 		color: #ff6b6b;
 		font-weight: 500;
+	}
+
+	.rating-summary {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 20px;
+	}
+
+	.stars-display .star-filled {
+		color: #ffc107;
+		font-size: 18px;
+	}
+
+	.stars-display .star-empty {
+		color: #ddd;
+		font-size: 18px;
+	}
+
+	.rating-value {
+		font-size: 18px;
+		font-weight: bold;
+		color: #ffc107;
+	}
+
+	.review-count {
+		font-size: 14px;
+		color: #666;
 	}
 
 	.price-section {
@@ -357,5 +588,209 @@
 		margin: 0;
 		line-height: 1.8;
 		color: #555;
+	}
+
+	.reviews-section {
+		margin-top: 60px;
+		padding-top: 40px;
+		border-top: 2px solid #f0f0f0;
+	}
+
+	.reviews-section h2 {
+		margin: 0 0 30px 0;
+		font-size: 24px;
+		color: #333;
+	}
+
+	.review-form-section {
+		background: #f8f9fa;
+		padding: 25px;
+		border-radius: 10px;
+		margin-bottom: 30px;
+	}
+
+	.review-form-section h3 {
+		margin: 0 0 20px 0;
+		font-size: 18px;
+		color: #333;
+	}
+
+	.already-reviewed {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 15px 20px;
+		background: #e8f5e9;
+		color: #2e7d32;
+		border-radius: 8px;
+	}
+
+	.check-icon {
+		font-size: 18px;
+		font-weight: bold;
+	}
+
+	.review-form .form-group {
+		margin-bottom: 20px;
+	}
+
+	.review-form .form-group label {
+		display: block;
+		margin-bottom: 10px;
+		font-weight: 500;
+		color: #333;
+	}
+
+	.star-rating {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.star-btn {
+		background: none;
+		border: none;
+		font-size: 28px;
+		color: #ddd;
+		cursor: pointer;
+		padding: 0;
+		transition: color 0.2s;
+	}
+
+	.star-btn:hover,
+	.star-btn-filled {
+		color: #ffc107;
+	}
+
+	.rating-text {
+		margin-left: 10px;
+		font-size: 14px;
+		color: #666;
+	}
+
+	.review-form textarea {
+		width: 100%;
+		padding: 12px;
+		border: 1px solid #ddd;
+		border-radius: 5px;
+		font-size: 14px;
+		resize: vertical;
+		box-sizing: border-box;
+	}
+
+	.review-form textarea:focus {
+		outline: none;
+		border-color: #667eea;
+	}
+
+	.submit-review-btn {
+		padding: 12px 30px;
+		background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+		color: white;
+		border: none;
+		border-radius: 5px;
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: opacity 0.2s;
+	}
+
+	.submit-review-btn:hover:not(:disabled) {
+		opacity: 0.9;
+	}
+
+	.submit-review-btn:disabled {
+		background: #ccc;
+		cursor: not-allowed;
+	}
+
+	.reviews-list {
+		margin-top: 20px;
+	}
+
+	.no-reviews {
+		text-align: center;
+		padding: 40px;
+		color: #999;
+		font-size: 16px;
+	}
+
+	.review-item {
+		padding: 20px 0;
+		border-bottom: 1px solid #eee;
+	}
+
+	.review-item:last-child {
+		border-bottom: none;
+	}
+
+	.review-header {
+		display: flex;
+		align-items: center;
+		gap: 15px;
+		margin-bottom: 10px;
+	}
+
+	.review-stars .star-filled {
+		color: #ffc107;
+		font-size: 16px;
+	}
+
+	.review-stars .star-empty {
+		color: #ddd;
+		font-size: 16px;
+	}
+
+	.review-date {
+		font-size: 13px;
+		color: #999;
+	}
+
+	.delete-review-btn {
+		margin-left: auto;
+		padding: 4px 12px;
+		background: #fff5f5;
+		color: #ff6b6b;
+		border: none;
+		border-radius: 4px;
+		font-size: 13px;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.delete-review-btn:hover {
+		background: #ffe0e0;
+	}
+
+	.review-content {
+		font-size: 14px;
+		line-height: 1.6;
+		color: #555;
+	}
+
+	.load-more-container {
+		text-align: center;
+		margin-top: 30px;
+	}
+
+	.load-more-btn {
+		padding: 12px 40px;
+		background: #f8f9fa;
+		color: #667eea;
+		border: 1px solid #ddd;
+		border-radius: 5px;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.load-more-btn:hover:not(:disabled) {
+		background: #e8f0fe;
+		border-color: #667eea;
+	}
+
+	.load-more-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

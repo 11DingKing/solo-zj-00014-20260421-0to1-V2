@@ -3,6 +3,8 @@
 	import { api } from '$lib/api';
 	import { goto } from '$app/navigation';
 
+	let activeTab = 'books';
+
 	let categories = [];
 	let books = [];
 	let loading = true;
@@ -21,6 +23,11 @@
 		cover_url: '',
 		description: ''
 	};
+
+	let reviews = [];
+	let reviewsPage = 1;
+	let hasMoreReviews = false;
+	let loadingReviews = false;
 
 	async function loadCategories() {
 		try {
@@ -41,6 +48,29 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function loadReviews(pageNum = 1, append = false) {
+		loadingReviews = true;
+		try {
+			const result = await api.getAllReviews({ page: pageNum });
+			if (append) {
+				reviews = [...reviews, ...result.results];
+			} else {
+				reviews = result.results;
+			}
+			hasMoreReviews = !!result.next;
+			reviewsPage = pageNum;
+		} catch (e) {
+			console.error('加载评价失败:', e);
+		} finally {
+			loadingReviews = false;
+		}
+	}
+
+	async function loadMoreReviews() {
+		if (!hasMoreReviews || loadingReviews) return;
+		await loadReviews(reviewsPage + 1, true);
 	}
 
 	function openAddModal() {
@@ -126,6 +156,44 @@
 		}
 	}
 
+	async function deleteReview(review) {
+		if (!confirm(`确定要删除这条评价吗？\n书籍: ${review.book_title}\n评分: ${review.rating}星`)) return;
+
+		try {
+			await api.adminDeleteReview(review.id);
+			alert('删除成功');
+			loadReviews();
+		} catch (e) {
+			alert('删除失败: ' + e.message);
+		}
+	}
+
+	function formatDate(dateStr) {
+		const date = new Date(dateStr);
+		return date.toLocaleDateString('zh-CN', {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	function renderStars(rating) {
+		let stars = '';
+		for (let i = 1; i <= 5; i++) {
+			stars += i <= rating ? '★' : '☆';
+		}
+		return stars;
+	}
+
+	function switchTab(tab) {
+		activeTab = tab;
+		if (tab === 'reviews' && reviews.length === 0) {
+			loadReviews();
+		}
+	}
+
 	onMount(() => {
 		loadCategories();
 		loadBooks();
@@ -133,66 +201,144 @@
 </script>
 
 <div class="page-header">
-	<h1>⚙️ 后台管理 - 图书</h1>
+	<h1>⚙️ 后台管理</h1>
 	<div class="header-actions">
-		<a href="/admin/categories" class="btn-secondary">分类管理</a>
-		<a href="/admin/orders" class="btn-secondary">订单管理</a>
-		<button class="btn-primary" on:click={openAddModal}>添加图书</button>
+		{#if activeTab === 'books'}
+			<button class="btn-primary" on:click={openAddModal}>添加图书</button>
+		{/if}
 	</div>
 </div>
 
-{#if loading}
-	<div class="loading">加载中...</div>
-{:else if error}
-	<div class="error">{error}</div>
-{:else}
-	<div class="books-table-container">
-		<table class="books-table">
-			<thead>
-				<tr>
-					<th>封面</th>
-					<th>书名</th>
-					<th>作者</th>
-					<th>分类</th>
-					<th>价格</th>
-					<th>库存</th>
-					<th>操作</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each books as book}
-					<tr>
-						<td>
-							<div class="thumb">
-								{#if book.cover_url}
-									<img src={book.cover_url} alt={book.title} />
-								{:else}
-									<span>📖</span>
-								{/if}
-							</div>
-						</td>
-						<td class="title-col">{book.title}</td>
-						<td>{book.author}</td>
-						<td>{book.category_name || '-'}</td>
-						<td class="price-col">¥{book.price}</td>
-						<td>
-							<span class={book.stock > 0 ? 'in-stock' : 'out-of-stock'}>
-								{book.stock}
-							</span>
-						</td>
-						<td>
-							<button class="btn-edit" on:click={() => openEditModal(book)}>编辑</button>
-							<button class="btn-delete" on:click={() => deleteBook(book)}>删除</button>
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+<div class="admin-tabs">
+	<button
+		class={activeTab === 'books' ? 'tab-btn active' : 'tab-btn'}
+		on:click={() => switchTab('books')}
+	>
+		📚 图书管理
+	</button>
+	<a href="/admin/categories" class="tab-btn">📂 分类管理</a>
+	<a href="/admin/orders" class="tab-btn">📦 订单管理</a>
+	<button
+		class={activeTab === 'reviews' ? 'tab-btn active' : 'tab-btn'}
+		on:click={() => switchTab('reviews')}
+	>
+		⭐ 评价管理
+	</button>
+</div>
 
-		{#if books.length === 0}
-			<div class="empty">暂无图书</div>
-		{/if}
-	</div>
+{#if activeTab === 'books'}
+	{#if loading}
+		<div class="loading">加载中...</div>
+	{:else if error}
+		<div class="error">{error}</div>
+	{:else}
+		<div class="books-table-container">
+			<table class="books-table">
+				<thead>
+					<tr>
+						<th>封面</th>
+						<th>书名</th>
+						<th>作者</th>
+						<th>分类</th>
+						<th>价格</th>
+						<th>库存</th>
+						<th>操作</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each books as book}
+						<tr>
+							<td>
+								<div class="thumb">
+									{#if book.cover_url}
+										<img src={book.cover_url} alt={book.title} />
+									{:else}
+										<span>📖</span>
+									{/if}
+								</div>
+							</td>
+							<td class="title-col">{book.title}</td>
+							<td>{book.author}</td>
+							<td>{book.category_name || '-'}</td>
+							<td class="price-col">¥{book.price}</td>
+							<td>
+								<span class={book.stock > 0 ? 'in-stock' : 'out-of-stock'}>
+									{book.stock}
+								</span>
+							</td>
+							<td>
+								<button class="btn-edit" on:click={() => openEditModal(book)}>编辑</button>
+								<button class="btn-delete" on:click={() => deleteBook(book)}>删除</button>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+
+			{#if books.length === 0}
+				<div class="empty">暂无图书</div>
+			{/if}
+		</div>
+	{/if}
+{:else if activeTab === 'reviews'}
+	{#if loadingReviews && reviews.length === 0}
+		<div class="loading">加载中...</div>
+	{:else}
+		<div class="reviews-table-container">
+			{#if reviews.length === 0}
+				<div class="empty">暂无评价</div>
+			{:else}
+				<table class="reviews-table">
+					<thead>
+						<tr>
+							<th>书籍</th>
+							<th>评分</th>
+							<th>评价内容</th>
+							<th>创建时间</th>
+							<th>用户会话ID</th>
+							<th>操作</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each reviews as review}
+							<tr>
+								<td class="book-title-col">
+									<div class="book-info">
+										<div class="book-name">{review.book_title}</div>
+										<div class="book-author">{review.book_author}</div>
+									</div>
+								</td>
+								<td>
+									<span class="stars-display">{renderStars(review.rating)}</span>
+									<span class="rating-text">({review.rating}星)</span>
+								</td>
+								<td class="content-col">
+									{review.content || '<span class="no-content">无评价内容</span>'}
+								</td>
+								<td class="date-col">{formatDate(review.created_at)}</td>
+								<td class="session-col">{review.user_session_id.slice(0, 12)}...</td>
+								<td>
+									<button class="btn-delete" on:click={() => deleteReview(review)}>删除</button>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+
+				{#if hasMoreReviews}
+					<div class="load-more-container">
+						<button
+							class="load-more-btn"
+							on:click={loadMoreReviews}
+							disabled={loadingReviews}
+						>
+							{loadingReviews ? '加载中...' : '加载更多'}
+						</button>
+					</div>
+				{/if}
+			{/if}
+		</div>
+	{/if}
 {/if}
 
 {#if showModal}
@@ -258,7 +404,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 30px;
+		margin-bottom: 20px;
 		flex-wrap: wrap;
 		gap: 15px;
 	}
@@ -271,6 +417,40 @@
 	.header-actions {
 		display: flex;
 		gap: 10px;
+	}
+
+	.admin-tabs {
+		display: flex;
+		gap: 5px;
+		margin-bottom: 30px;
+		border-bottom: 2px solid #f0f0f0;
+		padding-bottom: 0;
+	}
+
+	.tab-btn {
+		padding: 12px 24px;
+		background: transparent;
+		color: #666;
+		border: none;
+		border-bottom: 2px solid transparent;
+		border-radius: 5px 5px 0 0;
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s;
+		margin-bottom: -2px;
+		text-decoration: none;
+	}
+
+	.tab-btn:hover {
+		color: #667eea;
+		background: #f8f9fa;
+	}
+
+	.tab-btn.active {
+		color: #667eea;
+		border-bottom-color: #667eea;
+		background: #f8f9fa;
 	}
 
 	.btn-primary {
@@ -309,26 +489,31 @@
 		color: #ff6b6b;
 	}
 
-	.books-table-container {
+	.books-table-container,
+	.reviews-table-container {
 		background: white;
 		border-radius: 10px;
 		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 		overflow: hidden;
 	}
 
-	.books-table {
+	.books-table,
+	.reviews-table {
 		width: 100%;
 		border-collapse: collapse;
 	}
 
 	.books-table th,
-	.books-table td {
+	.books-table td,
+	.reviews-table th,
+	.reviews-table td {
 		padding: 15px;
 		text-align: left;
 		border-bottom: 1px solid #f0f0f0;
 	}
 
-	.books-table th {
+	.books-table th,
+	.reviews-table th {
 		background: #f8f9fa;
 		font-weight: 500;
 		color: #555;
@@ -363,6 +548,22 @@
 		color: #333;
 	}
 
+	.book-title-col .book-info {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.book-name {
+		font-weight: 500;
+		color: #333;
+	}
+
+	.book-author {
+		font-size: 12px;
+		color: #999;
+	}
+
 	.price-col {
 		font-weight: 500;
 		color: #ff6b6b;
@@ -376,6 +577,35 @@
 	.out-of-stock {
 		color: #ff6b6b;
 		font-weight: 500;
+	}
+
+	.stars-display {
+		color: #ffc107;
+		font-size: 16px;
+	}
+
+	.rating-text {
+		margin-left: 5px;
+		font-size: 13px;
+		color: #666;
+	}
+
+	.content-col {
+		max-width: 300px;
+		color: #555;
+		font-size: 13px;
+		line-height: 1.5;
+	}
+
+	.no-content {
+		color: #999;
+		font-style: italic;
+	}
+
+	.date-col,
+	.session-col {
+		font-size: 12px;
+		color: #999;
 	}
 
 	.btn-edit {
@@ -397,6 +627,33 @@
 		border-radius: 4px;
 		font-size: 13px;
 		cursor: pointer;
+	}
+
+	.load-more-container {
+		text-align: center;
+		padding: 20px;
+		border-top: 1px solid #f0f0f0;
+	}
+
+	.load-more-btn {
+		padding: 10px 30px;
+		background: #f8f9fa;
+		color: #667eea;
+		border: 1px solid #ddd;
+		border-radius: 5px;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.load-more-btn:hover:not(:disabled) {
+		background: #e8f0fe;
+		border-color: #667eea;
+	}
+
+	.load-more-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.modal-overlay {
